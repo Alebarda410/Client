@@ -1,0 +1,28 @@
+﻿<Window x:Class="Client.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:Client"
+        mc:Ignorable="d"
+        Title="ClientApp" Height="497" Width="800" Loaded="Window_Loaded" Background="#FFF0F0F0" WindowStartupLocation="CenterScreen" KeyUp="MainWindow_OnKeyUp" MouseDoubleClick="Window_MouseDoubleClick">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"></RowDefinition>
+            <RowDefinition></RowDefinition>
+
+        </Grid.RowDefinitions>
+        <ToolBar x:Name="Bar1" HorizontalAlignment="Stretch" VerticalAlignment="Top" HorizontalContentAlignment="Stretch" Background="#FFF0F0F0">
+            <Label Content="Порт"/>
+            <TextBox x:Name="portTextBox"  HorizontalAlignment="Left" Text="12345" TextWrapping="Wrap" VerticalAlignment="Top" Width="120"/>
+            <Label Content="Адрес"/>
+            <ComboBox x:Name="toolStripComboBox1" HorizontalAlignment="Left" VerticalAlignment="Top" Width="120" IsEditable="True">
+                <TextBlock>localhost</TextBlock>
+                <TextBlock>192.168.</TextBlock>
+            </ComboBox>
+            <Button x:Name="Connect" Content="Подключиться" HorizontalAlignment="Left" VerticalAlignment="Top" Click="Connect_Click"/>
+            <Button x:Name="Disconnect" Content="Отключиться" HorizontalAlignment="Left" VerticalAlignment="Top" IsEnabled="False" Click="Disconnect_Click"/>
+        </ToolBar>
+        <Image Grid.Row="1" x:Name="PictureBox"/>
+    </Grid>
+</Window>
