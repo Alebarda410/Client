@@ -6,18 +6,17 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media.Imaging;
+using static System.Threading.Tasks.Task;
 
 namespace Client
 {
     public partial class MainWindow : Window
     {
-        private Thread _thread;
-
         private string _name;
         private byte[] _nameByte;
         private readonly Telepathy.Client _client = new(512 * 1024);
-
         private bool _state;
+        private CancellationTokenSource _cts;
 
         public MainWindow()
         {
@@ -26,6 +25,7 @@ namespace Client
             _client.OnData = Dat;
             _client.OnDisconnected = Dis;
         }
+
         private void Dis()
         {
             Dispatcher.Invoke(() =>
@@ -34,29 +34,32 @@ namespace Client
                 Disconnect.IsEnabled = false;
                 PictureBox.Source = null;
             });
+            _cts.Cancel();
+
             MessageBox.Show("Трансляция закончилась или вы были отключены!", "Уведомление",
                 MessageBoxButton.OK, MessageBoxImage.Asterisk);
-            _thread.Interrupt();
         }
+
         private void Dat(ArraySegment<byte> msg)
         {
-            using var stream = new MemoryStream(msg.Array!);
-            var temp = BitmapFrame.Create(stream,
-                BitmapCreateOptions.None,
-                BitmapCacheOption.OnLoad);
             Dispatcher.Invoke(() =>
             {
-                PictureBox.Source = temp;
+                using var memoryStream = new MemoryStream(msg.Array!);
+
+                PictureBox.Source = BitmapFrame.Create(memoryStream,
+                    BitmapCreateOptions.None,
+                    BitmapCacheOption.OnLoad);
             });
         }
-        private void Getting()
+
+        private async void GettingAsync(CancellationToken token)
         {
             try
             {
-                while (true)
+                while (!token.IsCancellationRequested)
                 {
                     _client.Tick(2);
-                    Thread.Sleep(10);
+                    await Delay(10, token);
                 }
             }
             catch (Exception)
@@ -73,12 +76,13 @@ namespace Client
             toolStripComboBox1.SelectedIndex = 0;
         }
 
-        public static bool IsCorrect(string arg, out int numb, int lf = 0, int rt = int.MaxValue)
+        private static bool IsCorrect(string arg, out int numb, int lf = 0, int rt = int.MaxValue)
         {
             if (!int.TryParse(arg, out numb)) return false;
             return numb >= lf && numb <= rt;
         }
-        private void Connect_Click(object sender, RoutedEventArgs e)
+
+        private async void Connect_Click(object sender, RoutedEventArgs e)
         {
             if (!IsCorrect(portTextBox.Text, out var port, 10000, 60000))
             {
@@ -86,25 +90,23 @@ namespace Client
                     @"Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
+
             var ipString = toolStripComboBox1.Text;
             _client.Connect(ipString, port);
-            Thread.Sleep(100);
+            await Delay(100);
             if (!_client.Send(_nameByte))
             {
                 MessageBox.Show("Не удалось подключиться!", "Ошибка",
                     MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
+
             Connect.IsEnabled = false;
             Disconnect.IsEnabled = true;
-            _thread = new Thread(Getting)
-            {
-                IsBackground = true,
-                Priority = ThreadPriority.AboveNormal
-            };
-            Task.Run(() => MessageBox.Show("Вы находитесь в зале ожидания",
+            _cts = new CancellationTokenSource();
+            new Task(() => GettingAsync(_cts.Token), TaskCreationOptions.LongRunning).Start();
+            Run(() => MessageBox.Show("Вы находитесь в зале ожидания",
                 "Уведомление", MessageBoxButton.OK, MessageBoxImage.Asterisk));
-            _thread.Start();
         }
 
         private void Disconnect_Click(object sender, RoutedEventArgs e)
@@ -113,7 +115,8 @@ namespace Client
             Disconnect.IsEnabled = false;
             _client.Disconnect();
             PictureBox.Source = null;
-            _thread.Interrupt();
+
+            _cts.Cancel();
         }
 
         private void Window_MouseDoubleClick(object sender, MouseButtonEventArgs e)

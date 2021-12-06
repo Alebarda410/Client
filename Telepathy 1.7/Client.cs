@@ -19,9 +19,7 @@ namespace Telepathy
         // TcpClient.Connected doesn't check if socket != null, which
         // results in NullReferenceExceptions if connection was closed.
         // -> let's check it manually instead
-        public bool Connected => client != null &&
-                                 client.Client != null &&
-                                 client.Client.Connected;
+        public bool Connected => client is {Client: {Connected: true}};
 
         // TcpClient has no 'connecting' state to check. We need to keep track
         // of it manually.
@@ -44,10 +42,10 @@ namespace Telepathy
         public readonly MagnificentReceivePipe receivePipe;
 
         // constructor always creates new TcpClient for client connection!
-        public ClientConnectionState(int MaxMessageSize) : base(new TcpClient(), MaxMessageSize)
+        public ClientConnectionState(int maxMessageSize) : base(new TcpClient(), maxMessageSize)
         {
             // create receive pipe with max message size for pooling
-            receivePipe = new MagnificentReceivePipe(MaxMessageSize);
+            receivePipe = new MagnificentReceivePipe(maxMessageSize);
         }
 
         // dispose all the state safely
@@ -97,30 +95,30 @@ namespace Telepathy
         // Mirror/DOTSNET use MaxMessageSize batching, so for a 16kb max size:
         //   limit =  1,000 means  16 MB of memory/connection
         //   limit = 10,000 means 160 MB of memory/connection
-        public int SendQueueLimit = 10000;
-        public int ReceiveQueueLimit = 4;
+        private int SendQueueLimit = 10000;
+        private int ReceiveQueueLimit = 4;
 
         // all client state wrapped into an object that is passed to ReceiveThread
         // => we create a new one each time we connect to avoid data races with
         //    old dieing threads still using the previous object!
-        ClientConnectionState state;
+        ClientConnectionState _state;
 
         // Connected & Connecting
-        public bool Connected => state != null && state.Connected;
-        public bool Connecting => state != null && state.Connecting;
+        private bool Connected => _state is {Connected: true};
+        private bool Connecting => _state is {Connecting: true};
 
         // pipe count, useful for debugging / benchmarks
-        public int ReceivePipeCount => state != null ? state.receivePipe.TotalCount : 0;
+        public int ReceivePipeCount => _state != null ? _state.receivePipe.TotalCount : 0;
 
         // constructor
-        public Client(int MaxMessageSize) : base(MaxMessageSize) { }
+        public Client(int maxMessageSize) : base(maxMessageSize) { }
 
         // the thread function
         // STATIC to avoid sharing state!
         // => pass ClientState object. a new one is created for each new thread!
         // => avoids data races where an old dieing thread might still modify
         //    the current thread's state :/
-        static void ReceiveThreadFunction(ClientConnectionState state, string ip, int port, int MaxMessageSize, bool NoDelay, int SendTimeout, int ReceiveTimeout, int ReceiveQueueLimit)
+        private static void ReceiveThreadFunction(ClientConnectionState state, string ip, int port, int maxMessageSize, bool noDelay, int sendTimeout, int receiveTimeout, int receiveQueueLimit)
 
         {
             Thread sendThread = null;
@@ -135,19 +133,21 @@ namespace Telepathy
 
                 // set socket options after the socket was created in Connect()
                 // (not after the constructor because we clear the socket there)
-                state.client.NoDelay = NoDelay;
-                state.client.SendTimeout = SendTimeout;
-                state.client.ReceiveTimeout = ReceiveTimeout;
+                state.client.NoDelay = noDelay;
+                state.client.SendTimeout = sendTimeout;
+                state.client.ReceiveTimeout = receiveTimeout;
 
                 // start send thread only after connected
                 // IMPORTANT: DO NOT SHARE STATE ACROSS MULTIPLE THREADS!
-                sendThread = new Thread(() => { ThreadFunctions.SendLoop(0, state.client, state.sendPipe, state.sendPending); });
-                sendThread.IsBackground = true;
+                sendThread = new Thread(() => { ThreadFunctions.SendLoop(0, state.client, state.sendPipe, state.sendPending); })
+                    {
+                        IsBackground = true
+                    };
                 sendThread.Start();
 
                 // run the receive loop
                 // (receive pipe is shared across all loops)
-                ThreadFunctions.ReceiveLoop(0, state.client, MaxMessageSize, state.receivePipe, ReceiveQueueLimit);
+                ThreadFunctions.ReceiveLoop(0, state.client, maxMessageSize, state.receivePipe, receiveQueueLimit);
             }
             catch (SocketException exception)
             {
@@ -208,27 +208,30 @@ namespace Telepathy
             // overwrite old thread's state object. create a new one to avoid
             // data races where an old dieing thread might still modify the
             // current state! fixes all the flaky tests!
-            state = new ClientConnectionState(MaxMessageSize);
-
-            // We are connecting from now until Connect succeeds or fails
-            state.Connecting = true;
-
-            // create a TcpClient with perfect IPv4, IPv6 and hostname resolving
-            // support.
-            //
-            // * TcpClient(hostname, port): works but would connect (and block)
-            //   already
-            // * TcpClient(AddressFamily.InterNetworkV6): takes Ipv4 and IPv6
-            //   addresses but only connects to IPv6 servers (e.g. Telepathy).
-            //   does NOT connect to IPv4 servers (e.g. Mirror Booster), even
-            //   with DualMode enabled.
-            // * TcpClient(): creates IPv4 socket internally, which would force
-            //   Connect() to only use IPv4 sockets.
-            //
-            // => the trick is to clear the internal IPv4 socket so that Connect
-            //    resolves the hostname and creates either an IPv4 or an IPv6
-            //    socket as needed (see TcpClient source)
-            state.client.Client = null; // clear internal IPv4 socket until Connect()
+            _state = new ClientConnectionState(MaxMessageSize)
+            {
+                // We are connecting from now until Connect succeeds or fails
+                Connecting = true,
+                client =
+                {
+                    //    socket as needed (see TcpClient source)
+                    //    resolves the hostname and creates either an IPv4 or an IPv6
+                    // => the trick is to clear the internal IPv4 socket so that Connect
+                    //
+                    //   Connect() to only use IPv4 sockets.
+                    // * TcpClient(): creates IPv4 socket internally, which would force
+                    //   with DualMode enabled.
+                    //   does NOT connect to IPv4 servers (e.g. Mirror Booster), even
+                    //   addresses but only connects to IPv6 servers (e.g. Telepathy).
+                    // * TcpClient(AddressFamily.InterNetworkV6): takes Ipv4 and IPv6
+                    //   already
+                    // * TcpClient(hostname, port): works but would connect (and block)
+                    //
+                    // support.
+                    // create a TcpClient with perfect IPv4, IPv6 and hostname resolving
+                    Client = null // clear internal IPv4 socket until Connect()
+                }
+            };
 
             // client.Connect(ip, port) is blocking. let's call it in the thread
             // and return immediately.
@@ -236,12 +239,14 @@ namespace Telepathy
             //    too long, which is especially good in games
             // -> this way we don't async client.BeginConnect, which seems to
             //    fail sometimes if we connect too many clients too fast
-            state.receiveThread = new Thread(() =>
+            _state.receiveThread = new Thread(() =>
             {
-                ReceiveThreadFunction(state, ip, port, MaxMessageSize, NoDelay, SendTimeout, ReceiveTimeout, ReceiveQueueLimit);
-            });
-            state.receiveThread.IsBackground = true;
-            state.receiveThread.Start();
+                ReceiveThreadFunction(_state, ip, port, MaxMessageSize, NoDelay, SendTimeout, ReceiveTimeout, ReceiveQueueLimit);
+            })
+            {
+                IsBackground = true
+            };
+            _state.receiveThread.Start();
         }
 
         public void Disconnect()
@@ -250,7 +255,7 @@ namespace Telepathy
             if (Connecting || Connected)
             {
                 // dispose all the state safely
-                state.Dispose();
+                _state.Dispose();
 
                 // IMPORTANT: DO NOT set state = null!
                 // we still want to process the pipe's disconnect message etc.!
@@ -268,13 +273,13 @@ namespace Telepathy
                 if (message.Count <= MaxMessageSize)
                 {
                     // check send pipe limit
-                    if (state.sendPipe.Count < SendQueueLimit)
+                    if (_state.sendPipe.Count < SendQueueLimit)
                     {
                         // add to thread safe send pipe and return immediately.
                         // calling Send here would be blocking (sometimes for long
                         // times if other side lags or wire was disconnected)
-                        state.sendPipe.Enqueue(message);
-                        state.sendPending.Set(); // interrupt SendThread WaitOne()
+                        _state.sendPipe.Enqueue(message);
+                        _state.sendPending.Set(); // interrupt SendThread WaitOne()
                         return true;
                     }
                     // disconnect if send queue gets too big.
@@ -292,7 +297,7 @@ namespace Telepathy
                         Log.Warning($"Client.Send: sendPipe reached limit of {SendQueueLimit}. This can happen if we call send faster than the network can process messages. Disconnecting to avoid ever growing memory & latency.");
 
                         // just close it. send thread will take care of the rest.
-                        state.client.Close();
+                        _state.client.Close();
                         return false;
                     }
                 }
@@ -321,7 +326,7 @@ namespace Telepathy
             // only if state was created yet (after connect())
             // note: we don't check 'only if connected' because we want to still
             //       process Disconnect messages afterwards too!
-            if (state == null)
+            if (_state == null)
                 return 0;
 
             // process up to 'processLimit' messages
@@ -333,7 +338,7 @@ namespace Telepathy
 
                 // peek first. allows us to process the first queued entry while
                 // still keeping the pooled byte[] alive by not removing anything.
-                if (state.receivePipe.TryPeek(out int _, out EventType eventType, out ArraySegment<byte> message))
+                if (_state.receivePipe.TryPeek(out int _, out EventType eventType, out ArraySegment<byte> message))
                 {
                     switch (eventType)
                     {
@@ -350,7 +355,7 @@ namespace Telepathy
 
                     // IMPORTANT: now dequeue and return it to pool AFTER we are
                     //            done processing the event.
-                    state.receivePipe.TryDequeue();
+                    _state.receivePipe.TryDequeue();
                 }
                 // no more messages. stop the loop.
                 else break;
@@ -358,7 +363,7 @@ namespace Telepathy
             }
 
             // return what's left to process for next time
-            return state.receivePipe.TotalCount;
+            return _state.receivePipe.TotalCount;
         }
     }
 }

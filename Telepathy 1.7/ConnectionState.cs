@@ -22,14 +22,14 @@ namespace Telepathy
         // -> call Set() if everything was sent
         // -> call Reset() if there is something to send again
         // -> call WaitOne() to block until Reset was called
-        public ManualResetEvent sendPending = new ManualResetEvent(false);
+        public readonly ManualResetEvent sendPending = new ManualResetEvent(false);
 
-        public ConnectionState(TcpClient client, int MaxMessageSize)
+        public ConnectionState(TcpClient client, int maxMessageSize)
         {
             this.client = client;
 
             // create send pipe with max message size for pooling
-            sendPipe = new MagnificentSendPipe(MaxMessageSize);
+            sendPipe = new MagnificentSendPipe(maxMessageSize);
         }
     }
 }
