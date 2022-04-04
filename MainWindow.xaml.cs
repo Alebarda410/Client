@@ -10,13 +10,14 @@ using static System.Threading.Tasks.Task;
 
 namespace Client
 {
-    public partial class MainWindow : Window
+    public partial class MainWindow
     {
         private string _name;
         private byte[] _nameByte;
         private readonly Telepathy.Client _client = new(512 * 1024);
         private bool _state;
         private CancellationTokenSource _cts;
+        private  MemoryStream _memoryStream = new();
 
         public MainWindow()
         {
@@ -40,13 +41,15 @@ namespace Client
                 MessageBoxButton.OK, MessageBoxImage.Asterisk);
         }
 
-        private void Dat(ArraySegment<byte> msg)
+        private  void Dat(ArraySegment<byte> msg)
         {
+            _memoryStream.Position = 0;
+            _memoryStream.Write(msg);
+            _memoryStream.Position = 0;
+            
             Dispatcher.Invoke(() =>
             {
-                using var memoryStream = new MemoryStream(msg.Array!);
-
-                PictureBox.Source = BitmapFrame.Create(memoryStream,
+                PictureBox.Source = BitmapFrame.Create(_memoryStream,
                     BitmapCreateOptions.None,
                     BitmapCacheOption.OnLoad);
             });
